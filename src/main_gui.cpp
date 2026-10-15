@@ -2,6 +2,8 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QPalette>
+#include <QColor>
 
 #include "video_utils.h"
 #include "fire_crop.h"
@@ -21,9 +23,16 @@ public:
         m_status = "Extracting frames...";
         emit statusChanged();
 
-        bool success = extractFramesAtFPS(inputPath.toStdString(), outputDir.toStdString(),
-                                           fps, startTime.toStdString(), endTime.toStdString());
-        m_status = success ? "Frames extracted successfully!" : "Frame extraction failed.";
+        bool success = ::extractFramesAtFPS(inputPath.toStdString(), outputDir.toStdString(),
+                                            fps, startTime.toStdString(), endTime.toStdString());
+        
+        if (success) {
+            m_status = "Frames extracted successfully!";
+            emit operationFinished(true, m_status);
+        } else {
+            m_status = "Error: Frame extraction failed. Check the terminal for details.";
+            emit operationFinished(false, m_status);
+        }
         emit statusChanged();
     }
 
@@ -32,9 +41,16 @@ public:
         m_status = "Extracting fire crops...";
         emit statusChanged();
 
-        bool success = extractFireCrop(inputPath.toStdString(), outputDir.toStdString(),
-                                        startTime.toStdString(), endTime.toStdString(), fps);
-        m_status = success ? "Fire crops extracted!" : "Fire crop extraction failed.";
+        bool success = ::extractFireCrop(inputPath.toStdString(), outputDir.toStdString(),
+                                         startTime.toStdString(), endTime.toStdString(), fps);
+        
+        if (success) {
+            m_status = "Fire crops extracted!";
+            emit operationFinished(true, m_status);
+        } else {
+            m_status = "Error: Fire crop extraction failed. Check the terminal for details.";
+            emit operationFinished(false, m_status);
+        }
         emit statusChanged();
     }
 
@@ -43,37 +59,58 @@ public:
         m_status = "Analyzing variance...";
         emit statusChanged();
 
-        auto results = analyzeVideoVariance(inputPath.toStdString(), startTime.toStdString(),
-                                             endTime.toStdString(), n, m);
+        auto results = ::analyzeVideoVariance(inputPath.toStdString(), startTime.toStdString(),
+                                              endTime.toStdString(), n, m);
         if (results.empty()) {
-            m_status = "Variance analysis failed.";
+            m_status = "Error: Variance analysis failed. Check the terminal for details.";
+            emit operationFinished(false, m_status);
         } else {
             QString msg = "Variance results:\n";
             for (const auto& r : results) {
                 msg += QString("Sample %1: %2%\n").arg(r.sampleNumber).arg(r.differencePercent, 0, 'f', 2);
             }
             m_status = msg;
+            emit operationFinished(true, "Variance analysis complete!");
         }
         emit statusChanged();
     }
 
 signals:
     void statusChanged();
+    void operationFinished(bool success, const QString& message);
 
 private:
     QString m_status = "Ready";
 };
-
-#include "main_gui.moc"
 
 int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     app.setApplicationName("Video Processor");
     app.setOrganizationName("MyCompany");
 
-    QQuickStyle::setStyle("Material");
+    // ---------------------------------------------------------
+    // APPLY DARK FUSION PALETTE (For File Dialogs and Widgets)
+    // ---------------------------------------------------------
+    QQuickStyle::setStyle("Fusion");
 
-    qmlRegisterType<VideoProcessorBackend>("VideoProcessor", 1, 0, "VideoProcessorBackend");
+    QPalette darkPalette;
+    darkPalette.setColor(QPalette::Window, QColor(30, 30, 30));
+    darkPalette.setColor(QPalette::WindowText, Qt::white);
+    darkPalette.setColor(QPalette::Base, QColor(37, 37, 38));
+    darkPalette.setColor(QPalette::AlternateBase, QColor(45, 45, 48));
+    darkPalette.setColor(QPalette::ToolTipBase, Qt::white);
+    darkPalette.setColor(QPalette::ToolTipText, Qt::white);
+    darkPalette.setColor(QPalette::Text, Qt::white);
+    darkPalette.setColor(QPalette::Button, QColor(45, 45, 48));
+    darkPalette.setColor(QPalette::ButtonText, Qt::white);
+    darkPalette.setColor(QPalette::BrightText, Qt::red);
+    darkPalette.setColor(QPalette::Link, QColor(42, 130, 218));
+    darkPalette.setColor(QPalette::Highlight, QColor(42, 130, 218));
+    darkPalette.setColor(QPalette::HighlightedText, Qt::black);
+    darkPalette.setColor(QPalette::Disabled, QPalette::Text, QColor(127, 127, 127));
+    darkPalette.setColor(QPalette::Disabled, QPalette::WindowText, QColor(127, 127, 127));
+    app.setPalette(darkPalette);
+    // ---------------------------------------------------------
 
     QQmlApplicationEngine engine;
     VideoProcessorBackend backend;
@@ -87,3 +124,5 @@ int main(int argc, char *argv[]) {
 
     return app.exec();
 }
+
+#include "main_gui.moc"
