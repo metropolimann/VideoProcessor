@@ -1,5 +1,6 @@
 #include "video_variance.h"
 #include <iostream>
+#include <iomanip>   // <--- ADD THIS LINE
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -23,6 +24,7 @@ void printUsage(const char* prog) {
 }
 
 int main(int argc, char* argv[]) {
+    // ... (the rest of your main function stays exactly the same)
     if (argc != 6) {
         printUsage(argv[0]);
         return 1;

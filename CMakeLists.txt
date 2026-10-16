@@ -26,7 +26,7 @@ add_library(video_core STATIC
 target_link_libraries(video_core PRIVATE
     PkgConfig::FFMPEG
     Threads::Threads
-    Qt6::Core  # <--- Add Qt6::Core here
+    #Qt6::Core  # <--- Add Qt6::Core here
 )
 target_include_directories(video_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src

@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <cmath>
 #include <filesystem>
+#include <memory>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -141,8 +142,7 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
         codecCtx->width, codecCtx->height, AV_PIX_FMT_RGB24,
         SWS_BILINEAR, nullptr, nullptr, nullptr);
 
-    AVFrame* frameA = av_frame_alloc();
-    AVFrame* frameB = av_frame_alloc();
+    AVFrame* rawFrame = av_frame_alloc();
     AVFrame* rgbFrameA = av_frame_alloc();
     AVFrame* rgbFrameB = av_frame_alloc();
     rgbFrameA->format = AV_PIX_FMT_RGB24;
@@ -154,34 +154,71 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
     rgbFrameB->height = codecCtx->height;
     av_frame_get_buffer(rgbFrameB, 32);
 
-    // Seek to start
-    if (startSec > 0) {
-        int64_t seekTarget = av_rescale_q(startSec * AV_TIME_BASE,
-            AVRational{1, AV_TIME_BASE}, AV_TIME_BASE_Q);
-        av_seek_frame(inputFmt.get(), -1, seekTarget, AVSEEK_FLAG_BACKWARD);
-        avcodec_flush_buffers(codecCtx);
-    }
-
     AVPacket* packet = av_packet_alloc();
-    int frameCount = 0;
-    double currentPtsSec = 0;
-
+    
+    // We will seek per sample to ensure accuracy
     for (int sample = 1; sample <= n; ++sample) {
         double targetTimeA = startSec + (sample - 1) * sampleIntervalSec;
-        double targetTimeB = targetTimeA + (m > 0 ? m / av_q2d(videoStream->r_frame_rate) : 
-                                       1.0 / av_q2d(videoStream->r_frame_rate));
+        double frameDuration = 1.0 / av_q2d(videoStream->r_frame_rate);
+        double targetTimeB = targetTimeA + (m > 0 ? m * frameDuration : frameDuration);
 
-        // Read frames until we reach target time A
-        // (Simplified: read sequential frames and compare when we hit the right PTS)
-        // ... (full implementation would decode frames and match PTS)
+        // Seek to targetTimeA
+        int64_t seekTarget = static_cast<int64_t>(targetTimeA * AV_TIME_BASE);
+        av_seek_frame(inputFmt.get(), -1, seekTarget, AVSEEK_FLAG_BACKWARD);
+        avcodec_flush_buffers(codecCtx);
 
-        // For brevity, the full loop implementation follows the same pattern
-        // as extractFramesAtFPS in video_utils.cpp
+        bool gotA = false;
+        bool gotB = false;
+        double currentPtsSec = targetTimeA; // rough estimate for fallback
+
+        while (av_read_frame(inputFmt.get(), packet) >= 0) {
+            if (packet->stream_index != videoStreamIdx) {
+                av_packet_unref(packet);
+                continue;
+            }
+
+            int ret = avcodec_send_packet(codecCtx, packet);
+            av_packet_unref(packet);
+            if (ret < 0) continue;
+
+            while (avcodec_receive_frame(codecCtx, rawFrame) == 0) {
+                // Calculate PTS in seconds
+                double ptsSec = currentPtsSec;
+                if (rawFrame->pts != AV_NOPTS_VALUE) {
+                    ptsSec = rawFrame->pts * av_q2d(videoStream->time_base);
+                } else {
+                    ptsSec = currentPtsSec + frameDuration;
+                }
+                currentPtsSec = ptsSec;
+
+                // If we haven't got frame A yet, check if this is the one
+                if (!gotA && ptsSec >= targetTimeA) {
+                    sws_scale(swsCtx, rawFrame->data, rawFrame->linesize, 0,
+                              codecCtx->height, rgbFrameA->data, rgbFrameA->linesize);
+                    gotA = true;
+                }
+
+                // If we have A, check for B
+                if (gotA && !gotB && ptsSec >= targetTimeB) {
+                    sws_scale(swsCtx, rawFrame->data, rawFrame->linesize, 0,
+                              codecCtx->height, rgbFrameB->data, rgbFrameB->linesize);
+                    gotB = true;
+                    break; // Break inner loop
+                }
+            }
+            if (gotB) break; // Break outer loop
+        }
+
+        if (gotA && gotB) {
+            double diff = calculateFrameDifference(rgbFrameA, rgbFrameB, codecCtx->width, codecCtx->height);
+            results.push_back({sample, diff});
+        } else {
+            std::cerr << "Warning: Could not extract frame pair for sample " << sample << std::endl;
+        }
     }
 
     // Cleanup
-    av_frame_free(&frameA);
-    av_frame_free(&frameB);
+    av_frame_free(&rawFrame);
     av_frame_free(&rgbFrameA);
     av_frame_free(&rgbFrameB);
     av_packet_free(&packet);

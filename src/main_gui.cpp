@@ -4,10 +4,24 @@
 #include <QQuickStyle>
 #include <QPalette>
 #include <QColor>
+#include <QDebug>
 
 #include "video_utils.h"
 #include "fire_crop.h"
 #include "video_variance.h"
+
+static QString sanitizeTime(const QString& input) {
+    QString cleaned;
+    for (const QChar& c : input) {
+        if (c.isDigit()) {
+            cleaned += c;
+        }
+    }
+    if (cleaned.isEmpty()) {
+        return "";
+    }
+    return input;
+}
 
 class VideoProcessorBackend : public QObject {
     Q_OBJECT
@@ -20,17 +34,42 @@ public:
 
     Q_INVOKABLE void extractFrames(const QString& inputPath, const QString& outputDir,
                                     int fps, const QString& startTime, const QString& endTime) {
+        
+        if (inputPath.isEmpty()) {
+            m_status = "Error: Please select a video file first.";
+            emit operationFinished(false, m_status);
+            emit statusChanged();
+            return;
+        }
+        if (outputDir.isEmpty()) {
+            m_status = "Error: Please select an output directory.";
+            emit operationFinished(false, m_status);
+            emit statusChanged();
+            return;
+        }
+
         m_status = "Extracting frames...";
         emit statusChanged();
 
-        bool success = ::extractFramesAtFPS(inputPath.toStdString(), outputDir.toStdString(),
-                                            fps, startTime.toStdString(), endTime.toStdString());
-        
-        if (success) {
-            m_status = "Frames extracted successfully!";
-            emit operationFinished(true, m_status);
-        } else {
-            m_status = "Error: Frame extraction failed. Check the terminal for details.";
+        try {
+            std::string sTime = sanitizeTime(startTime).toStdString();
+            std::string eTime = sanitizeTime(endTime).toStdString();
+
+            bool success = ::extractFramesAtFPS(inputPath.toStdString(), outputDir.toStdString(),
+                                                fps, sTime, eTime);
+            
+            if (success) {
+                m_status = "Frames extracted successfully!";
+                emit operationFinished(true, m_status);
+            } else {
+                m_status = "Error: Frame extraction failed. Check console for details.";
+                emit operationFinished(false, m_status);
+            }
+        } catch (const std::exception& e) {
+            m_status = QString("Error: ") + e.what();
+            emit operationFinished(false, m_status);
+        } catch (...) {
+            m_status = "Error: An unknown exception occurred during frame extraction.";
             emit operationFinished(false, m_status);
         }
         emit statusChanged();
@@ -38,17 +77,42 @@ public:
 
     Q_INVOKABLE void extractFireCrop(const QString& inputPath, const QString& outputDir,
                                       int fps, const QString& startTime, const QString& endTime) {
+        
+        if (inputPath.isEmpty()) {
+            m_status = "Error: Please select a video file first.";
+            emit operationFinished(false, m_status);
+            emit statusChanged();
+            return;
+        }
+        if (outputDir.isEmpty()) {
+            m_status = "Error: Please select an output directory.";
+            emit operationFinished(false, m_status);
+            emit statusChanged();
+            return;
+        }
+
         m_status = "Extracting fire crops...";
         emit statusChanged();
 
-        bool success = ::extractFireCrop(inputPath.toStdString(), outputDir.toStdString(),
-                                         startTime.toStdString(), endTime.toStdString(), fps);
-        
-        if (success) {
-            m_status = "Fire crops extracted!";
-            emit operationFinished(true, m_status);
-        } else {
-            m_status = "Error: Fire crop extraction failed. Check the terminal for details.";
+        try {
+            std::string sTime = sanitizeTime(startTime).toStdString();
+            std::string eTime = sanitizeTime(endTime).toStdString();
+
+            bool success = ::extractFireCrop(inputPath.toStdString(), outputDir.toStdString(),
+                                             sTime, eTime, fps);
+            
+            if (success) {
+                m_status = "Fire crops extracted!";
+                emit operationFinished(true, m_status);
+            } else {
+                m_status = "Error: Fire crop extraction failed. Check console for details.";
+                emit operationFinished(false, m_status);
+            }
+        } catch (const std::exception& e) {
+            m_status = QString("Error: ") + e.what();
+            emit operationFinished(false, m_status);
+        } catch (...) {
+            m_status = "Error: An unknown exception occurred during fire crop extraction.";
             emit operationFinished(false, m_status);
         }
         emit statusChanged();
@@ -56,21 +120,39 @@ public:
 
     Q_INVOKABLE void analyzeVariance(const QString& inputPath, const QString& startTime,
                                       const QString& endTime, int n, int m) {
+        
+        if (inputPath.isEmpty()) {
+            m_status = "Error: Please select a video file first.";
+            emit operationFinished(false, m_status);
+            emit statusChanged();
+            return;
+        }
+
         m_status = "Analyzing variance...";
         emit statusChanged();
 
-        auto results = ::analyzeVideoVariance(inputPath.toStdString(), startTime.toStdString(),
-                                              endTime.toStdString(), n, m);
-        if (results.empty()) {
-            m_status = "Error: Variance analysis failed. Check the terminal for details.";
-            emit operationFinished(false, m_status);
-        } else {
-            QString msg = "Variance results:\n";
-            for (const auto& r : results) {
-                msg += QString("Sample %1: %2%\n").arg(r.sampleNumber).arg(r.differencePercent, 0, 'f', 2);
+        try {
+            std::string sTime = sanitizeTime(startTime).toStdString();
+            std::string eTime = sanitizeTime(endTime).toStdString();
+
+            auto results = ::analyzeVideoVariance(inputPath.toStdString(), sTime, eTime, n, m);
+            if (results.empty()) {
+                m_status = "Error: Variance analysis failed or returned no results.";
+                emit operationFinished(false, m_status);
+            } else {
+                QString msg = "Variance results:\n";
+                for (const auto& r : results) {
+                    msg += QString("Sample %1: %2%\n").arg(r.sampleNumber).arg(r.differencePercent, 0, 'f', 2);
+                }
+                m_status = msg;
+                emit operationFinished(true, "Variance analysis complete!");
             }
-            m_status = msg;
-            emit operationFinished(true, "Variance analysis complete!");
+        } catch (const std::exception& e) {
+            m_status = QString("Error: ") + e.what();
+            emit operationFinished(false, m_status);
+        } catch (...) {
+            m_status = "Error: An unknown exception occurred during variance analysis.";
+            emit operationFinished(false, m_status);
         }
         emit statusChanged();
     }
@@ -88,9 +170,6 @@ int main(int argc, char *argv[]) {
     app.setApplicationName("Video Processor");
     app.setOrganizationName("MyCompany");
 
-    // ---------------------------------------------------------
-    // APPLY DARK FUSION PALETTE (For File Dialogs and Widgets)
-    // ---------------------------------------------------------
     QQuickStyle::setStyle("Fusion");
 
     QPalette darkPalette;
@@ -110,7 +189,6 @@ int main(int argc, char *argv[]) {
     darkPalette.setColor(QPalette::Disabled, QPalette::Text, QColor(127, 127, 127));
     darkPalette.setColor(QPalette::Disabled, QPalette::WindowText, QColor(127, 127, 127));
     app.setPalette(darkPalette);
-    // ---------------------------------------------------------
 
     QQmlApplicationEngine engine;
     VideoProcessorBackend backend;
