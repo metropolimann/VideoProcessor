@@ -24,17 +24,15 @@ static double calculateFrameDifference(AVFrame* frameA, AVFrame* frameB, int wid
         uint8_t* rowA = frameA->data[0] + y * frameA->linesize[0];
         uint8_t* rowB = frameB->data[0] + y * frameB->linesize[0];
         for (int x = 0; x < width; ++x) {
-            // Compare RGB values (3 bytes per pixel)
             int idx = x * 3;
-            if (rowA[idx] != rowB[idx] ||      // R
-                rowA[idx + 1] != rowB[idx + 1] || // G
-                rowA[idx + 2] != rowB[idx + 2]) { // B
+            if (rowA[idx] != rowB[idx] ||
+                rowA[idx + 1] != rowB[idx + 1] ||
+                rowA[idx + 2] != rowB[idx + 2]) {
                 differentPixels++;
             }
         }
     }
 
-    // 100% = identical, 0% = completely different
     return 100.0 * (1.0 - static_cast<double>(differentPixels) / totalPixels);
 }
 
@@ -44,7 +42,6 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
                                                   int n, int m) {
     std::vector<VarianceResult> results;
 
-    // Validate inputs
     if (n <= 0) {
         std::cerr << "Error: Number of samples (n) must be positive." << std::endl;
         return results;
@@ -58,7 +55,6 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
         return results;
     }
 
-    // Open input
     AVFormatContext* rawInput = nullptr;
     if (avformat_open_input(&rawInput, inputPath.c_str(), nullptr, nullptr) < 0) {
         std::cerr << "Could not open input file." << std::endl;
@@ -72,7 +68,6 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
         return results;
     }
 
-    // Find video stream
     int videoStreamIdx = -1;
     AVStream* videoStream = nullptr;
     for (unsigned int i = 0; i < inputFmt->nb_streams; ++i) {
@@ -87,7 +82,6 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
         return results;
     }
 
-    // Setup decoder
     const AVCodec* codec = avcodec_find_decoder(videoStream->codecpar->codec_id);
     if (!codec) {
         std::cerr << "Failed to find decoder." << std::endl;
@@ -106,7 +100,6 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
         return results;
     }
 
-    // Parse times
     int64_t startSec = 0, endSec = INT64_MAX;
     if (!startTime.empty()) startSec = parseTimeToSeconds(startTime);
     if (!endTime.empty()) endSec = parseTimeToSeconds(endTime);
@@ -126,7 +119,6 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
         return results;
     }
 
-    // Calculate sample interval (in seconds)
     double sampleIntervalSec = durationSec / n;
 
     std::cout << "Variance Analysis:" << std::endl;
@@ -136,7 +128,12 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
     std::cout << " - Frame distance (m): " << m << std::endl;
     std::cout << " - Sample interval: " << sampleIntervalSec << "s" << std::endl;
 
-    // Setup scaler to RGB24
+    // CORRECTED: Guard against zero frame rate
+    double fps = av_q2d(videoStream->r_frame_rate);
+    if (fps <= 0) fps = av_q2d(videoStream->avg_frame_rate);
+    if (fps <= 0) fps = 30.0; // Fallback to 30 FPS
+    double frameDuration = 1.0 / fps;
+
     SwsContext* swsCtx = sws_getContext(
         codecCtx->width, codecCtx->height, codecCtx->pix_fmt,
         codecCtx->width, codecCtx->height, AV_PIX_FMT_RGB24,
@@ -156,20 +153,18 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
 
     AVPacket* packet = av_packet_alloc();
     
-    // We will seek per sample to ensure accuracy
     for (int sample = 1; sample <= n; ++sample) {
         double targetTimeA = startSec + (sample - 1) * sampleIntervalSec;
-        double frameDuration = 1.0 / av_q2d(videoStream->r_frame_rate);
+        // Uses the guarded frameDuration
         double targetTimeB = targetTimeA + (m > 0 ? m * frameDuration : frameDuration);
 
-        // Seek to targetTimeA
         int64_t seekTarget = static_cast<int64_t>(targetTimeA * AV_TIME_BASE);
         av_seek_frame(inputFmt.get(), -1, seekTarget, AVSEEK_FLAG_BACKWARD);
         avcodec_flush_buffers(codecCtx);
 
         bool gotA = false;
         bool gotB = false;
-        double currentPtsSec = targetTimeA; // rough estimate for fallback
+        double currentPtsSec = targetTimeA;
 
         while (av_read_frame(inputFmt.get(), packet) >= 0) {
             if (packet->stream_index != videoStreamIdx) {
@@ -182,7 +177,6 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
             if (ret < 0) continue;
 
             while (avcodec_receive_frame(codecCtx, rawFrame) == 0) {
-                // Calculate PTS in seconds
                 double ptsSec = currentPtsSec;
                 if (rawFrame->pts != AV_NOPTS_VALUE) {
                     ptsSec = rawFrame->pts * av_q2d(videoStream->time_base);
@@ -191,22 +185,20 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
                 }
                 currentPtsSec = ptsSec;
 
-                // If we haven't got frame A yet, check if this is the one
                 if (!gotA && ptsSec >= targetTimeA) {
                     sws_scale(swsCtx, rawFrame->data, rawFrame->linesize, 0,
                               codecCtx->height, rgbFrameA->data, rgbFrameA->linesize);
                     gotA = true;
                 }
 
-                // If we have A, check for B
                 if (gotA && !gotB && ptsSec >= targetTimeB) {
                     sws_scale(swsCtx, rawFrame->data, rawFrame->linesize, 0,
                               codecCtx->height, rgbFrameB->data, rgbFrameB->linesize);
                     gotB = true;
-                    break; // Break inner loop
+                    break;
                 }
             }
-            if (gotB) break; // Break outer loop
+            if (gotB) break;
         }
 
         if (gotA && gotB) {
@@ -217,7 +209,6 @@ std::vector<VarianceResult> analyzeVideoVariance(const std::string& inputPath,
         }
     }
 
-    // Cleanup
     av_frame_free(&rawFrame);
     av_frame_free(&rgbFrameA);
     av_frame_free(&rgbFrameB);

@@ -1,7 +1,8 @@
 #include "video_variance.h"
 #include <iostream>
-#include <iomanip>   // <--- ADD THIS LINE
+#include <iomanip>
 #include <filesystem>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -24,7 +25,6 @@ void printUsage(const char* prog) {
 }
 
 int main(int argc, char* argv[]) {
-    // ... (the rest of your main function stays exactly the same)
     if (argc != 6) {
         printUsage(argv[0]);
         return 1;
@@ -48,7 +48,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    auto results = analyzeVideoVariance(inputFile, startTime, endTime, n, m);
+    // CORRECTED: Wrapped in try-catch to prevent crash on bad time format
+    std::vector<VarianceResult> results;
+    try {
+        results = analyzeVideoVariance(inputFile, startTime, endTime, n, m);
+    } catch (const std::exception& e) {
+        std::cerr << "Error during variance analysis: " << e.what() << std::endl;
+        return 1;
+    }
 
     if (results.empty()) {
         std::cerr << "Analysis failed or no results." << std::endl;

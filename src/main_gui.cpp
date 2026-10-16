@@ -10,6 +10,7 @@
 #include "fire_crop.h"
 #include "video_variance.h"
 
+// Helper: Strips inputMask placeholder characters so we can detect a truly empty field.
 static QString sanitizeTime(const QString& input) {
     QString cleaned;
     for (const QChar& c : input) {
@@ -52,6 +53,7 @@ public:
         emit statusChanged();
 
         try {
+            // CORRECTED: Uses sanitizeTime() so blank masks pass empty strings
             std::string sTime = sanitizeTime(startTime).toStdString();
             std::string eTime = sanitizeTime(endTime).toStdString();
 
@@ -95,6 +97,7 @@ public:
         emit statusChanged();
 
         try {
+            // CORRECTED: Uses sanitizeTime()
             std::string sTime = sanitizeTime(startTime).toStdString();
             std::string eTime = sanitizeTime(endTime).toStdString();
 
@@ -132,6 +135,7 @@ public:
         emit statusChanged();
 
         try {
+            // CORRECTED: Uses sanitizeTime()
             std::string sTime = sanitizeTime(startTime).toStdString();
             std::string eTime = sanitizeTime(endTime).toStdString();
 
